@@ -23,7 +23,7 @@ import styles from "./Layout.module.scss";
 import { MAIL_LIST } from "./constants";
 import { APIServices } from "../../services/apiServices.js";
 
-const socket = io.connect("localhost:5000");
+const socket = io.connect(process.env.REACT_APP_SOCKET_HOST);
 
 const { Header, Sider, Content } = Layout;
 const { TextArea } = Input;
