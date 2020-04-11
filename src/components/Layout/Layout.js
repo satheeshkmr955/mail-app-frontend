@@ -37,12 +37,13 @@ const menuItem = [
 ];
 
 const resetState = {
-  loading: true,
+  loading: false,
   visible: false,
   emailOptions: [],
   emailValue: [],
   uploadFile: [],
-  form: { email: [], subject: "", message: "", attachment: [] },
+  form: { email: [], subject: "", message: "", attachment: [], _id: "" },
+  defaultFileList: [],
 };
 
 class LayoutComponent extends Component {
@@ -56,7 +57,8 @@ class LayoutComponent extends Component {
     emailOptions: [],
     emailValue: [],
     uploadFile: [],
-    form: { email: [], subject: "", message: "", attachment: [] },
+    form: { email: [], subject: "", message: "", attachment: [], _id: "" },
+    defaultFileList: [],
   };
 
   componentDidMount = async () => {
@@ -70,11 +72,15 @@ class LayoutComponent extends Component {
         userDetails: { id },
       } = this.props;
       socket.on("inbox", (data) => {
-        this.getMails({ mailType: "inbox" });
+        this.getMails({ mailType: "inbox", status: "SEND" });
         notification["success"]({
           message: `New Message Received`,
           description: `${data.name} has mail you regarding ${data.subject}`,
         });
+      });
+      socket.on("error", (data) => {
+        // re-establish socket connection
+        socket.emit("updateDetails", { id });
       });
       socket.emit("updateDetails", { id });
     } catch (err) {
@@ -103,9 +109,40 @@ class LayoutComponent extends Component {
               this.handleDeleteMessage(obj);
             }}
           >
-            <i className="fas fa-trash "></i>
+            <i className="fas fa-trash"></i>
           </div>
         );
+        const replyIcon =
+          status === "DRAFT" ? (
+            <div
+              className={styles.deleteIcon}
+              onClick={() => {
+                const { receiverId, subject, message, attachment, _id } = obj;
+                const form = {
+                  email: receiverId,
+                  subject,
+                  message,
+                  attachment,
+                  _id,
+                };
+                const emailValue = obj.receiverId.map((obj) => {
+                  return { label: obj.email, value: obj.id, key: obj.id };
+                });
+                const defaultFileList = obj.attachment.map((fileObj) => {
+                  return {
+                    uid: fileObj._id,
+                    name: fileObj.filesDetails.originalname,
+                    status: "done",
+                    response: { data: { ...fileObj } },
+                  };
+                });
+                this.setState({ form, emailValue, defaultFileList });
+                this.handleOpen("DRAFT");
+              }}
+            >
+              <i className="fas fa-pencil-alt"></i>
+            </div>
+          ) : null;
         const downloadButton =
           obj.attachment.length > 0 ? (
             <Button
@@ -127,19 +164,28 @@ class LayoutComponent extends Component {
           name: name,
           deleteIcon,
           downloadButton,
+          replyIcon,
           createdAt: moment(obj.createdAt)
+            .local()
+            .format("YYYY-MM-DD ddd hh:mm:ss A"),
+          updatedAt: moment(obj.updatedAt)
             .local()
             .format("YYYY-MM-DD ddd hh:mm:ss A"),
         };
       });
-      this.setState({ loading: false, mails, mailType, status });
+      this.setState({
+        loading: false,
+        mails,
+        mailType,
+        status,
+      });
     } catch (err) {
       console.log(err);
     }
   };
 
-  handleOpen = () => {
-    this.setState({ visible: true });
+  handleOpen = (status = "SEND") => {
+    this.setState({ visible: true, status });
   };
 
   handleFileDownload = async (obj) => {
@@ -157,6 +203,41 @@ class LayoutComponent extends Component {
       console.log(err);
       notification["error"]({
         message: "Error while Downloading",
+        description: err.response.data.error,
+      });
+    }
+  };
+
+  handleMessageUpdate = async (status = "DRAFT") => {
+    try {
+      const { form, mailType } = this.state;
+      const { email, subject, message, attachment, _id } = form;
+      if (status !== "DRAFT" && email.length === 0) {
+        notification["error"]({
+          message: "Mail ID is required",
+          description: "",
+        });
+        this.setState({ ...resetState });
+        return;
+      }
+      const data = {
+        receiverId: email,
+        status,
+        subject,
+        message,
+        attachment,
+      };
+      await APIServices.updateMessage({ id: _id, data });
+      notification["success"]({
+        message: status === "DRAFT" ? `Saved as Draft` : `Mail Sent`,
+        description: "",
+      });
+      this.setState({ ...resetState });
+      this.getMails({ mailType, status });
+    } catch (err) {
+      console.log(err);
+      notification["error"]({
+        message: "Error while Updating Message",
         description: err.response.data.error,
       });
     }
@@ -180,12 +261,11 @@ class LayoutComponent extends Component {
     }
   };
 
-  handleOk = async () => {
-    this.setState({ loading: true });
+  handleOk = async (status) => {
     try {
-      const { form, mailType, status } = this.state;
-      const { email } = form;
-      if (email.length === 0) {
+      const { form, mailType } = this.state;
+      const { email, subject, message, attachment } = form;
+      if (status !== "DRAFT" && email.length === 0) {
         notification["error"]({
           message: "Mail ID is required",
           description: "",
@@ -194,46 +274,38 @@ class LayoutComponent extends Component {
         return;
       }
       const data = {
-        ...form,
         receiverId: email,
-        status: "send",
+        status,
+        subject,
+        message,
+        attachment,
       };
       await APIServices.createMessage({ data });
       notification["success"]({
-        message: `Mail Sent`,
+        message: status === "DRAFT" ? `Saved as Draft` : `Mail Sent`,
         description: "",
       });
       this.setState({ ...resetState });
       this.getMails({ mailType, status });
     } catch (err) {
       notification["error"]({
-        message: "Sent Failed",
+        message: status === "DRAFT" ? `Draft Failed` : `Sent Failed`,
         description: err.response.data.error,
       });
       this.setState({ ...resetState });
     }
   };
 
-  handleCancel = async () => {
-    this.setState({ loading: true });
-    try {
-      const { form, mailType, status } = this.state;
-      const { email } = form;
-      const data = { ...form, receiverId: email, status: "draft" };
-      await APIServices.createMessage({ data });
-      notification["success"]({
-        message: `Saved as Draft`,
-        description: "",
-      });
-      this.setState({ ...resetState });
-      this.getMails({ mailType, status });
-    } catch (err) {
-      notification["error"]({
-        message: "Draft Failed",
-        description: err.response.data.error,
-      });
-      this.setState({ ...resetState });
-    }
+  modalOkHandler = async () => {
+    const { status } = this.state;
+    if (status === "DRAFT") this.handleMessageUpdate("SEND");
+    else this.handleOk("SEND");
+  };
+
+  modalCancelHandler = async () => {
+    const { status } = this.state;
+    if (status === "DRAFT") this.handleMessageUpdate("DRAFT");
+    else this.handleOk("DRAFT");
   };
 
   handleEmailSearch = async (value) => {
@@ -261,6 +333,30 @@ class LayoutComponent extends Component {
       });
     } catch (err) {
       console.log(err);
+    }
+  };
+
+  handleFileUploadChange = async (info) => {
+    if (info.file.status !== "uploading") {
+      const fileId = info.fileList.map((obj) => obj.response.data._id);
+      this.setState((prevState) => {
+        return {
+          ...prevState,
+          form: { ...prevState.form, attachment: fileId },
+          uploadFile: info.fileList,
+        };
+      });
+    }
+    if (info.file.status === "done") {
+      notification["success"]({
+        message: `Upload Success`,
+        description: `${info.file.name} file uploaded successfully`,
+      });
+    } else if (info.file.status === "error") {
+      notification["error"]({
+        message: `Upload Failed`,
+        description: `${info.file.name} file upload failed.`,
+      });
     }
   };
 
@@ -296,6 +392,7 @@ class LayoutComponent extends Component {
       emailOptions,
       form,
       emailValue,
+      defaultFileList,
     } = this.state;
     const {
       userDetails: { name, token },
@@ -307,29 +404,8 @@ class LayoutComponent extends Component {
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      onChange: (info) => {
-        if (info.file.status !== "uploading") {
-          const fileId = info.fileList.map((obj) => obj.response.data._id);
-          this.setState((prevState) => {
-            return {
-              ...prevState,
-              form: { ...prevState.form, attachment: fileId },
-              uploadFile: info.fileList,
-            };
-          });
-        }
-        if (info.file.status === "done") {
-          notification["success"]({
-            message: `Upload Success`,
-            description: `${info.file.name} file uploaded successfully`,
-          });
-        } else if (info.file.status === "error") {
-          notification["error"]({
-            message: `Upload Failed`,
-            description: `${info.file.name} file upload failed.`,
-          });
-        }
-      },
+      defaultFileList,
+      onChange: this.handleFileUploadChange,
     };
 
     return (
@@ -361,88 +437,20 @@ class LayoutComponent extends Component {
               defaultSelectedKeys={[`Inbox${collapsed}`]}
               mode="inline"
             >
-              <Button
-                type="primary"
-                shape="round"
-                icon={<PlusOutlined />}
-                size={"large"}
-                style={{ marginBottom: "5px" }}
-                onClick={this.handleOpen}
-              >
-                {collapsed ? "" : "Compose"}
-              </Button>
-              <Modal
-                visible={visible}
-                title="Compose Mails"
-                onOk={this.handleOk}
-                onCancel={this.handleCancel}
-                footer={[
-                  <Button key="back" onClick={this.handleCancel}>
-                    Draft
-                  </Button>,
-                  <Button
-                    key="submit"
-                    type="primary"
-                    loading={loading}
-                    onClick={this.handleOk}
-                  >
-                    Send
-                  </Button>,
-                ]}
-              >
-                <label htmlFor="">To</label>
-                <div>
-                  <Select
-                    showSearch
-                    mode="tags"
-                    labelInValue
-                    style={{ width: "100%" }}
-                    onChange={this.handleEmailChange}
-                    onSearch={this.handleEmailSearch}
-                    filterOption={(inputValue, option) =>
-                      option.children
-                        .toString()
-                        .toLowerCase()
-                        .includes(inputValue.toLowerCase())
-                    }
-                    value={emailValue}
-                  >
-                    {emailOptions.map((option) => (
-                      <Option key={option._id} value={option._id}>
-                        {option.email}
-                      </Option>
-                    ))}
-                  </Select>
-                </div>
-                <label htmlFor="">Subject</label>
-                <Input
-                  value={form.subject}
-                  onChange={(e) => {
-                    this.handleInputChange({
-                      key: "subject",
-                      value: e.target.value,
-                    });
+              <Menu.Item>
+                <Button
+                  type="primary"
+                  shape="round"
+                  icon={<PlusOutlined />}
+                  size={"large"}
+                  onClick={() => {
+                    this.handleOpen("SEND");
                   }}
-                />
-                <label htmlFor="">Message</label>
-                <TextArea
-                  rows={4}
-                  value={form.message}
-                  onChange={(e) => {
-                    this.handleInputChange({
-                      key: "message",
-                      value: e.target.value,
-                    });
-                  }}
-                />
-                <div className={styles.uploadPos} key={visible}>
-                  <Upload {...handleFileUpload}>
-                    <Button>
-                      <UploadOutlined /> Click to Upload
-                    </Button>
-                  </Upload>
-                </div>
-              </Modal>
+                >
+                  {collapsed ? "" : "Compose"}
+                </Button>
+              </Menu.Item>
+
               {menuItem.map((obj) => {
                 return (
                   <Menu.Item
@@ -466,6 +474,77 @@ class LayoutComponent extends Component {
                 );
               })}
             </Menu>
+            <Modal
+              visible={visible}
+              title="Compose Mails"
+              onOk={this.modalOkHandler}
+              onCancel={this.modalCancelHandler}
+              footer={[
+                <Button key="back" onClick={this.modalCancelHandler}>
+                  Draft
+                </Button>,
+                <Button
+                  key="submit"
+                  type="primary"
+                  onClick={this.modalOkHandler}
+                >
+                  Send
+                </Button>,
+              ]}
+            >
+              <label htmlFor="">To</label>
+              <div>
+                <Select
+                  showSearch
+                  mode="tags"
+                  labelInValue
+                  style={{ width: "100%" }}
+                  onChange={this.handleEmailChange}
+                  onSearch={this.handleEmailSearch}
+                  filterOption={(inputValue, option) =>
+                    option.children
+                      .toString()
+                      .toLowerCase()
+                      .includes(inputValue.toLowerCase())
+                  }
+                  value={emailValue}
+                >
+                  {emailOptions.map((option) => (
+                    <Option key={option._id} value={option._id}>
+                      {option.email}
+                    </Option>
+                  ))}
+                </Select>
+              </div>
+              <label htmlFor="">Subject</label>
+              <Input
+                value={form.subject}
+                onChange={(e) => {
+                  this.handleInputChange({
+                    key: "subject",
+                    value: e.target.value,
+                  });
+                }}
+              />
+              <label htmlFor="">Message</label>
+              <TextArea
+                rows={4}
+                value={form.message}
+                onChange={(e) => {
+                  this.handleInputChange({
+                    key: "message",
+                    value: e.target.value,
+                  });
+                }}
+              />
+              <div className={styles.uploadPos} key={visible}>
+                <Upload {...handleFileUpload}>
+                  <Button>
+                    <UploadOutlined /> Click to Upload
+                  </Button>
+                </Upload>
+              </div>
+            </Modal>
           </Sider>
           <Content className={styles.content}>
             <Table

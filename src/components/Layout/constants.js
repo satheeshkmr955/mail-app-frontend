@@ -17,8 +17,16 @@ export const MAIL_LIST = {
       dataIndex: "createdAt",
     },
     {
+      title: "Modified At",
+      dataIndex: "updatedAt",
+    },
+    {
       title: "Attachment",
       dataIndex: "downloadButton",
+    },
+    {
+      title: "",
+      dataIndex: "replyIcon",
     },
     {
       title: "",

@@ -27,6 +27,9 @@ export const APIServices = {
   getMessage: ({ id = "" }) => {
     return axios.get(`/v1/message/${id}`);
   },
+  updateMessage: ({ id = "", data }) => {
+    return axios.patch(`/v1/message/${id}`, data);
+  },
   deleteMessage: ({ id = "" }) => {
     return axios.delete(`/v1/message/${id}`);
   },
